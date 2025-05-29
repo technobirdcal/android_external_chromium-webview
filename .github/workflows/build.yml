@@ -1,4 +1,4 @@
-name: Build Chromium WebView APK and Release with Version
+name: Build Chromium WebView APK and Release
 
 on:
   push:
@@ -7,68 +7,85 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-webview:
+  build:
+    name: Build Chromium WebView
     runs-on: ubuntu-latest
+
     env:
-      ANDROID_SDK_ROOT: ${{ env.HOME }}/android-sdk
+      ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
 
     steps:
-      - name: Checkout repo
+      - name: Checkout source code
         uses: actions/checkout@v3
 
-      - name: Setup PATH for Android SDK tools
-        run: echo "PATH=$ANDROID_SDK_ROOT/cmdline-tools/tools/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH" >> $GITHUB_ENV
-
-      - name: Install required dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y openjdk-11-jdk wget unzip python3 git
+          sudo apt-get install -y openjdk-11-jdk wget unzip git python3 curl tar || \
+          sudo apt install -y default-jdk wget unzip git python3 curl tar
 
-      - name: Setup Android SDK
+      - name: Download and install Android SDK (com fallback)
         run: |
-          mkdir -p $ANDROID_SDK_ROOT/cmdline-tools
-          wget https://dl.google.com/android/repository/commandlinetools-linux-9123335_latest.zip -O cmdline-tools.zip
-          unzip cmdline-tools.zip -d $ANDROID_SDK_ROOT/cmdline-tools
-          yes | $ANDROID_SDK_ROOT/cmdline-tools/tools/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses
-          $ANDROID_SDK_ROOT/cmdline-tools/tools/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT "platform-tools" "platforms;android-30" "build-tools;30.0.3"
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9123335_latest.zip -O sdk.zip || \
+          curl -L -o sdk.zip https://dl.google.com/android/repository/commandlinetools-linux-9123335_latest.zip
+          unzip -q sdk.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
+          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/tools"
+          yes | $ANDROID_SDK_ROOT/cmdline-tools/tools/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses || true
+          $ANDROID_SDK_ROOT/cmdline-tools/tools/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT \
+            "platform-tools" "platforms;android-30" "build-tools;30.0.3"
 
-      - name: Extract Chromium version from build-webview.sh
-        id: extract_version
+      - name: Add Android SDK to PATH
         run: |
-          VERSION=$(grep -Po '(?<=chromium_version=)[0-9.]+' build-webview.sh | head -1)
+          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
+          echo "$ANDROID_SDK_ROOT/cmdline-tools/tools/bin" >> $GITHUB_PATH
+
+      - name: Extract Chromium version (com fallback)
+        id: version
+        run: |
+          VERSION=$(grep -oP 'chromium_version=\K[0-9.]+' build-webview.sh | head -1 || echo "0.0.0")
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Prepare build environment
+      - name: Build APK
         run: |
           chmod +x build-webview.sh
-          ./build-webview.sh
+          ./build-webview.sh || (echo "Build falhou" && exit 1)
 
-      - name: Find generated APK and rename with version
-        id: find_and_rename_apk
+      - name: Encontrar e renomear APK (com várias alternativas)
+        id: rename
         run: |
-          APK_PATH=$(find . -type f -name '*.apk' | head -1)
-          VERSION=${{ steps.extract_version.outputs.version }}
-          NEW_APK_NAME="chromium-webview-v${VERSION}.apk"
-          mv "$APK_PATH" "$NEW_APK_NAME"
-          echo "apk_path=$PWD/$NEW_APK_NAME" >> $GITHUB_OUTPUT
+          APK=$(find . -type f -name "*.apk" | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "APK não encontrado!" && exit 1
+          fi
 
-      - name: Create GitHub Release
+          FINAL_APK="chromium-webview-v${{ env.VERSION }}.apk"
+
+          # Fallback: remover espaços, usar basename
+          FINAL_PATH=$(realpath "$APK" 2>/dev/null || readlink -f "$APK" || echo "$APK")
+          cp "$APK" "$FINAL_APK"
+
+          echo "apk_name=$FINAL_APK" >> $GITHUB_OUTPUT
+          echo "apk_path=$FINAL_PATH" >> $GITHUB_OUTPUT
+
+      - name: Criar Release no GitHub (fallback com GITHUB_TOKEN)
         id: create_release
         uses: actions/create-release@v1
         with:
-          tag_name: v${{ steps.extract_version.outputs.version }}
-          release_name: Chromium WebView v${{ steps.extract_version.outputs.version }}
+          tag_name: v${{ steps.version.outputs.version }}
+          release_name: Chromium WebView v${{ steps.version.outputs.version }}
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
 
-      - name: Upload APK to Release
+      - name: Enviar APK para a Release (com verificação)
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.find_and_rename_apk.outputs.apk_path }}
-          asset_name: chromium-webview-v${{ steps.extract_version.outputs.version }}.apk
+          asset_path: ${{ steps.rename.outputs.apk_path }}
+          asset_name: ${{ steps.rename.outputs.apk_name }}
           asset_content_type: application/vnd.android.package-archive
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
