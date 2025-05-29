@@ -1,91 +1,37 @@
-name: Build Chromium WebView APK and Release
+name: Upload Prebuilt WebView APK to Release
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-  workflow_dispatch:
 
 jobs:
-  build:
-    name: Build Chromium WebView
+  upload-prebuilt:
     runs-on: ubuntu-latest
-
-    env:
-      ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
+    name: Upload Prebuilt APK
 
     steps:
-      - name: Checkout source code
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Install dependencies
+      - name: Check if APK exists
+        id: check_apk
         run: |
-          sudo apt-get update
-          sudo apt-get install -y openjdk-11-jdk wget unzip git python3 curl tar || \
-          sudo apt install -y default-jdk wget unzip git python3 curl tar
-
-      - name: Download and install Android SDK (com fallback)
-        run: |
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-9123335_latest.zip -O sdk.zip || \
-          curl -L -o sdk.zip https://dl.google.com/android/repository/commandlinetools-linux-9123335_latest.zip
-          unzip -q sdk.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
-          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools" "$ANDROID_SDK_ROOT/cmdline-tools/tools"
-          yes | $ANDROID_SDK_ROOT/cmdline-tools/tools/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses || true
-          $ANDROID_SDK_ROOT/cmdline-tools/tools/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT \
-            "platform-tools" "platforms;android-30" "build-tools;30.0.3"
-
-      - name: Add Android SDK to PATH
-        run: |
-          echo "$ANDROID_SDK_ROOT/platform-tools" >> $GITHUB_PATH
-          echo "$ANDROID_SDK_ROOT/cmdline-tools/tools/bin" >> $GITHUB_PATH
-
-      - name: Extract Chromium version (com fallback)
-        id: version
-        run: |
-          VERSION=$(grep -oP 'chromium_version=\K[0-9.]+' build-webview.sh | head -1 || echo "0.0.0")
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          APK_PATH="prebuilt/arm64/webview.apk"
+          if [ ! -f "$APK_PATH" ]; then
+            echo "❌ APK não encontrado em $APK_PATH"
+            exit 1
+          fi
+          VERSION="prebuilt-$(date +%Y%m%d%H%M%S)"
+          echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Build APK
-        run: |
-          chmod +x build-webview.sh
-          ./build-webview.sh || (echo "Build falhou" && exit 1)
-
-      - name: Encontrar e renomear APK (com várias alternativas)
-        id: rename
-        run: |
-          APK=$(find . -type f -name "*.apk" | head -n 1)
-          if [ -z "$APK" ]; then
-            echo "APK não encontrado!" && exit 1
-          fi
-
-          FINAL_APK="chromium-webview-v${{ env.VERSION }}.apk"
-
-          # Fallback: remover espaços, usar basename
-          FINAL_PATH=$(realpath "$APK" 2>/dev/null || readlink -f "$APK" || echo "$APK")
-          cp "$APK" "$FINAL_APK"
-
-          echo "apk_name=$FINAL_APK" >> $GITHUB_OUTPUT
-          echo "apk_path=$FINAL_PATH" >> $GITHUB_OUTPUT
-
-      - name: Criar Release no GitHub (fallback com GITHUB_TOKEN)
-        id: create_release
-        uses: actions/create-release@v1
+      - name: Upload to GitHub Releases
+        uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          release_name: Chromium WebView v${{ steps.version.outputs.version }}
-          draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-
-      - name: Enviar APK para a Release (com verificação)
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ${{ steps.rename.outputs.apk_path }}
-          asset_name: ${{ steps.rename.outputs.apk_name }}
-          asset_content_type: application/vnd.android.package-archive
+          name: WebView Prebuilt ${{ steps.check_apk.outputs.version }}
+          tag_name: ${{ steps.check_apk.outputs.version }}
+          files: ${{ steps.check_apk.outputs.apk_path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
