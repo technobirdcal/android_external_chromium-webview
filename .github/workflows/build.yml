@@ -11,11 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ANDROID_SDK_ROOT: /usr/local/android-sdk
-      PATH: /usr/local/android-sdk/tools/bin:/usr/local/android-sdk/platform-tools:${PATH}
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
+
+      - name: Setup PATH for Android SDK tools
+        run: echo "PATH=$ANDROID_SDK_ROOT/cmdline-tools/tools/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH" >> $GITHUB_ENV
 
       - name: Install required dependencies
         run: |
