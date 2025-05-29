@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ANDROID_SDK_ROOT: /usr/local/android-sdk
-      PATH: ${{ env.ANDROID_SDK_ROOT }}/tools/bin:${{ env.ANDROID_SDK_ROOT }}/platform-tools:${{ env.PATH }}
+      PATH: /usr/local/android-sdk/tools/bin:/usr/local/android-sdk/platform-tools:${PATH}
 
     steps:
       - name: Checkout repo
@@ -44,7 +44,7 @@ jobs:
       - name: Find generated APK and rename with version
         id: find_and_rename_apk
         run: |
-          APK_PATH=$(find . -type f -name '*.apk' | head -n 1)
+          APK_PATH=$(find . -type f -name '*.apk' | head -1)
           VERSION=${{ steps.extract_version.outputs.version }}
           NEW_APK_NAME="chromium-webview-v${VERSION}.apk"
           mv "$APK_PATH" "$NEW_APK_NAME"
@@ -59,7 +59,7 @@ jobs:
           draft: false
           prerelease: false
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
 
       - name: Upload APK to Release
         uses: actions/upload-release-asset@v1
@@ -69,4 +69,4 @@ jobs:
           asset_name: chromium-webview-v${{ steps.extract_version.outputs.version }}.apk
           asset_content_type: application/vnd.android.package-archive
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
